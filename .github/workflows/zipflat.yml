@@ -1,0 +1,83 @@
+name: ZIP Flat
+run-name: "zipflat ${{ inputs.job_id }}"
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Repo sumber (owner/repo)"
+        required: true
+      branch:
+        description: "Branch (kosong = default)"
+        required: false
+        default: ""
+      sub:
+        description: "Folder dalam repo (pilihan)"
+        required: false
+        default: ""
+      filter:
+        description: "Tapisan nama fail (pilihan)"
+        required: false
+        default: ""
+      flat:
+        description: "Flatten (true/false)"
+        required: false
+        default: "true"
+      per_zip:
+        description: "Bilangan fail setiap ZIP kecil (0 = satu ZIP)"
+        required: false
+        default: "10"
+      job_id:
+        description: "ID job dari KodEdit"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  zipflat:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      SRC: ${{ inputs.source }}
+      BRANCH: ${{ inputs.branch }}
+      SUB: ${{ inputs.sub }}
+      FILTER: ${{ inputs.filter }}
+      FLAT: ${{ inputs.flat }}
+      PER_ZIP: ${{ inputs.per_zip }}
+      JOB_ID: ${{ inputs.job_id }}
+    steps:
+      - name: Ambil skrip worker
+        uses: actions/checkout@v4
+
+      - name: Semak input
+        run: |
+          [[ "$SRC" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "Repo sumber tidak sah: $SRC"; exit 1; }
+          [[ "$JOB_ID" =~ ^[A-Za-z0-9_.-]+$ ]] || { echo "job_id tidak sah"; exit 1; }
+          [[ "$PER_ZIP" =~ ^[0-9]+$ ]] || { echo "per_zip mesti nombor"; exit 1; }
+
+      - name: Clone repo sumber
+        run: |
+          if [ -n "$BRANCH" ]; then
+            git clone --depth 1 --branch "$BRANCH" "https://github.com/$SRC.git" sumber
+          else
+            git clone --depth 1 "https://github.com/$SRC.git" sumber
+          fi
+          echo "BR=$(git -C sumber rev-parse --abbrev-ref HEAD)" >> "$GITHUB_ENV"
+
+      - name: Flatten & ZIP
+        run: |
+          LABEL="https://github.com/$SRC/tree/$BR${SUB:+/$SUB}"
+          NAME="${SRC#*/}${SUB:+-${SUB//\//-}}"
+          python3 zipflat.py --src sumber --out hasil --name "$NAME" --label "$LABEL" \
+            --sub "$SUB" --filter "$FILTER" --flat "$FLAT" --per-zip "$PER_ZIP"
+          ls -la hasil
+
+      - name: Terbit ke Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$JOB_ID" hasil/*.zip \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "ZIP $SRC${SUB:+/$SUB}" \
+            --notes-file hasil/nota.txt
